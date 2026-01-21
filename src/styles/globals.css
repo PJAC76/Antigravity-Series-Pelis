@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+:root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+    --primary: #e50914;
+    --secondary: #141414;
+    --accent: #3498db;
+}
+
+@theme {
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-primary: var(--primary);
+    --color-secondary: var(--secondary);
+    --color-accent: var(--accent);
+
+    --font-sans: "Inter", system-ui, sans-serif;
+}
+
+@layer base {
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+.glass-card {
+    @apply bg-white/5 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden;
+}
+
+.primary-gradient {
+    background: linear-gradient(135deg, #e50914 0%, #b20710 100%);
+}
