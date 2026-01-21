@@ -110,10 +110,9 @@ export const DetailPage = () => {
     const matchingGenres = media.genres?.filter((g: string) => favoriteGenres.includes(g)) || [];
 
     // Analyze disparity (Polarization)
-    const faScore = filmaffinity?.score_normalized ?? 0;
-    const redditScore = reddit?.score_normalized ?? 0;
     const forocochesScore = forocoches?.score_normalized ?? 0;
     
+
     // 1. Personalized + High Quality
     if (matchingGenres.length > 0 && avgScore > 7.5) {
       const genre = matchingGenres[0];

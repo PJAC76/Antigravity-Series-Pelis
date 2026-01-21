@@ -1,5 +1,21 @@
 import { supabase } from '../lib/supabase';
 
+export const authService = {
+    // Get current session
+    getSession: async () => {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        return session;
+    },
+
+    // Sign out
+    signOut: async () => {
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+    }
+    // Signup and Login will be implemented with UI forms
+};
+
 export const mediaService = {
     // Fetch Top 10 rankings with optional genre filtering
     getTopRankings: async (type: 'historical' | 'recent', genres?: string[]) => {
@@ -43,8 +59,8 @@ export const mediaService = {
             if (error) throw error;
             return false;
         } else {
-            const { error } = await supabase
-                .from('user_favorites')
+            const { error } = await (supabase
+                .from('user_favorites') as any)
                 .insert({ user_id: userId, media_item_id: mediaItemId });
             if (error) throw error;
             return true;
@@ -61,7 +77,7 @@ export const mediaService = {
             .eq('user_id', userId);
 
         if (error) throw error;
-        return data.map(f => f.media_items);
+        return (data as any[]).map(f => f.media_items);
     },
 
     // Get details for a specific item including source scores

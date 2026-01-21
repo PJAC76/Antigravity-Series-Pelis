@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Star, Calendar, Info, Heart } from 'lucide-react';
 
 interface MediaCardProps {

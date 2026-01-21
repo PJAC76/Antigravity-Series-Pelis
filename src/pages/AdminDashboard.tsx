@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { adminService, mediaService } from '../services/mediaService';
 import { supabase } from '../lib/supabase';
-import { Play, Activity, Database, Users, AlertCircle, CheckCircle2, Loader2, RefreshCw, Film, Tv, Image } from 'lucide-react';
+import { Play, Activity, Database, Users, AlertCircle, CheckCircle2, Loader2, RefreshCw, Film, Tv } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export const AdminDashboard = () => {
