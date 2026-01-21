@@ -12,6 +12,14 @@ export const Home = () => {
     const [rankingType, setRankingType] = useState<'historical' | 'recent'>('recent');
     const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
     const [movies, setMovies] = useState<any[]>([]);
+    const [showDebug, setShowDebug] = useState(false);
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('debug') === 'true') {
+            setShowDebug(true);
+        }
+    }, []);
     const [series, setSeries] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [user, setUser] = useState<any>(null);
@@ -129,6 +137,14 @@ export const Home = () => {
 
     return (
         <Layout>
+            {showDebug && (
+                <div className="mb-8 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-2xl text-[10px] font-mono text-yellow-200/60 break-all">
+                    <p className="font-bold text-yellow-500 mb-1 uppercase tracking-widest">Diagnostic Mode</p>
+                    <p>URL: {import.meta.env.VITE_SUPABASE_URL ? `${import.meta.env.VITE_SUPABASE_URL.substring(0, 15)}...${import.meta.env.VITE_SUPABASE_URL.slice(-5)}` : 'MISSING'}</p>
+                    <p>KEY: {import.meta.env.VITE_SUPABASE_ANON_KEY ? `${import.meta.env.VITE_SUPABASE_ANON_KEY.substring(0, 10)}...${import.meta.env.VITE_SUPABASE_ANON_KEY.slice(-10)}` : 'MISSING'}</p>
+                    <p className="mt-2 opacity-100 text-yellow-200">Si ves 'MISSING' o los caracteres no coinciden con tu proyecto, revisa las variables en Vercel.</p>
+                </div>
+            )}
             <div className="space-y-10">
                 {/* Header */}
                 <section>
