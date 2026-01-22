@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
             }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        // 2. Extract favorite genres and keywords from titles
+        // 2. Extract favorite genres
         const favoriteGenres = new Set<string>();
         favorites.forEach((f: any) => {
             if (f.media_items && f.media_items.genres) {
@@ -36,40 +36,52 @@ Deno.serve(async (req) => {
 
         // 3. Find candidate items (balanced Movies and Series)
         const favoriteIds = favorites.map((f: any) => f.media_item_id);
+        console.log(`User ${userId} has ${favoriteIds.length} favorites.`);
         
-        // Fetch top 30 Movies and top 30 Series to ensure diversity
-        const [{ data: movieCandidates, error: movieError }, { data: seriesCandidates, error: seriesError }] = await Promise.all([
-            supabase
-                .from('media_items')
-                .select('*, sources_scores(*)')
-                .eq('type', 'movie')
-                .not('id', 'in', favoriteIds)
-                .limit(30),
-            supabase
-                .from('media_items')
-                .select('*, sources_scores(*)')
-                .eq('type', 'series')
-                .not('id', 'in', favoriteIds)
-                .limit(30)
-        ]);
+        let movieCandidates = [];
+        let seriesCandidates = [];
+        
+        try {
+            // PostgREST .not('id', 'in', '(uuid1,uuid2)') is safer for raw filtering
+            const filter = `(${favoriteIds.join(',')})`;
+            
+            const [{ data: mData, error: mError }, { data: sData, error: sError }] = await Promise.all([
+                supabase
+                    .from('media_items')
+                    .select('*, sources_scores(*)')
+                    .eq('type', 'movie')
+                    .not('id', 'in', filter)
+                    .limit(30),
+                supabase
+                    .from('media_items')
+                    .select('*, sources_scores(*)')
+                    .eq('type', 'series')
+                    .not('id', 'in', filter)
+                    .limit(30)
+            ]);
 
-        if (movieError) throw movieError;
-        if (seriesError) throw seriesError;
+            if (mError) throw mError;
+            if (sError) throw sError;
+            
+            movieCandidates = mData || [];
+            seriesCandidates = sData || [];
+        } catch (fetchErr: any) {
+            console.error("Fetch candidates error:", fetchErr);
+            throw new Error(`Error fetching candidates: ${fetchErr.message}`);
+        }
 
-        const candidates = [...(movieCandidates || []), ...(seriesCandidates || [])];
+        const candidates = [...movieCandidates, ...seriesCandidates];
+        console.log(`Found ${candidates.length} candidates for recommendations.`);
 
-        if (!candidates || candidates.length === 0) throw new Error("No candidates found for recommendations");
+        if (candidates.length === 0) throw new Error("No candidates found (database might be empty)");
 
-        // 4. Recommendation Logic (Similarity Score + Analytical Insights)
+        // 4. Recommendation Logic
         const results = candidates.map((item: any) => {
             let score = 0;
             const commonGenres = item.genres?.filter((g: string) => favoriteGenres.has(g)) || [];
-            score += commonGenres.length * 2; // Genre weight
+            score += commonGenres.length * 2;
 
-            // --- EXPERT LOGIC PORT START ---
             let finalReason = "";
-            let variant = "default";
-
             const scores = item.sources_scores || [];
             const avgScore = scores.reduce((acc: number, s: any) => acc + s.score_normalized, 0) / (scores.length || 1);
             
@@ -77,48 +89,18 @@ Deno.serve(async (req) => {
             const filmaffinity = scores.find((s: any) => s.source === "filmaffinity");
             const forocoches = scores.find((s: any) => s.source === "forocoches");
 
-            // Logic 0: Personalized Match (High Priority)
             if (commonGenres.length > 0 && avgScore > 7.5) {
                 const genre = commonGenres[0];
-                const templates = [
-                    `Match Directo: Tu afinidad por el género ${genre} cruza perfectamente con este título de alta valoración (${avgScore.toFixed(1)} de media). Una integración de narrativa y estilo visual que encaja con tu historial.`,
-                    `Recomendación Personal: Analizando tus favoritos, el sistema predice una alta probabilidad de satisfacción con '${item.title}'. Destaca por su ejecución en ${genre}, superior a la media del sector.`,
-                    `Alineación de Perfil: Este título resuena con tus preferencias en ${genre}. La data sugiere que es una de esas obras que refuerzan tu criterio cinematográfico.`
-                ];
-                finalReason = templates[Math.floor(Math.random() * templates.length)];
-                variant = "purple";
+                finalReason = `Match Directo: Tu afinidad por el género ${genre} encaja perfectamente con este título (${avgScore.toFixed(1)} de media).`;
+            } else if (avgScore > 8.5) {
+                finalReason = `Consenso Crítico: Con una media de ${avgScore.toFixed(1)}, '${item.title}' es una apuesta segura validada por datos.`;
+            } else if ((reddit?.score_normalized ?? 0) > 8.2 && (filmaffinity?.score_normalized ?? 0) < 7.0 && filmaffinity) {
+                finalReason = `Fenómeno de Nicho: La disparidad entre crítica y Reddit revela una obra de culto que te sorprenderá.`;
+            } else if ((forocoches?.score_normalized ?? 0) > 8.5) {
+                finalReason = `Alto Impacto: Forocoches destaca '${item.title}' por su ritmo y capacidad de entretenimiento.`;
+            } else {
+                finalReason = `Validación Estadística: '${item.title}' presenta métricas sólidas. Una elección racional basada en la consistencia de guion.`;
             }
-            // Logic 1: Universal Masterpiece
-            else if (avgScore > 8.5) {
-                finalReason = `Consenso Crítico: Con una media global de ${avgScore.toFixed(1)}, '${item.title}' trasciende los gustos subjetivos. Es una pieza de ingeniería narrativa validada unánimemente por todas las fuentes de datos.`;
-                variant = "gold";
-            }
-            // Logic 2: Cult Hit (Polarized)
-            else if ((reddit?.score_normalized ?? 0) > 8.2 && (filmaffinity?.score_normalized ?? 0) < 7.0 && filmaffinity) {
-                finalReason = `Fenómeno de Nicho: La disparidad entre crítica tradicional y Reddit revela una obra de culto. '${item.title}' ofrece una propuesta arriesgada que conecta profundamente con audiencias específicas.`;
-                variant = "blue";
-            }
-            // Logic 3: Forocoches Recommendation
-            else if ((forocoches?.score_normalized ?? 0) > 8.5) {
-                finalReason = `Alto Impacto: El algoritmo de Forocoches destaca '${item.title}' por su ritmo y capacidad de entretenimiento puro. Una opción optimizada para sesiones donde se busca eficacia narrativa sin relleno.`;
-                variant = "red";
-            }
-            // Logic 4: Classic Reliability
-            else if (item.year < 2015 && avgScore > 7.5) {
-                finalReason = `Valor Histórico: '${item.title}' ha resistido la prueba del tiempo. Su puntuación sostenida a lo largo de los años indica una calidad estructural que supera a las producciones efímeras actuales.`;
-                variant = "purple";
-            }
-            // Logic 5: General / Smart Pick
-            else {
-                const generalTemplates = [
-                    `Validación Estadística: '${item.title}' presenta métricas sólidas en todos los frentes. Una elección racional basada en la consistencia de guion y dirección.`,
-                    `Perfil Equilibrado: Sin estridencias pero sin fallos. El análisis de datos sitúa a esta obra en el percentil superior de fiabilidad. Cine sólido.`,
-                    `Recomendación Algorítmica: Cruzando variables de género y recepción, este título emerge como una opción segura para tu perfil de visionado.`
-                ];
-                 finalReason = generalTemplates[Math.floor(Math.random() * generalTemplates.length)];
-                 variant = "default";
-            }
-            // --- EXPERT LOGIC PORT END ---
 
             return {
                 user_id: userId,
@@ -128,14 +110,14 @@ Deno.serve(async (req) => {
             };
         });
 
-        // Sort by similarity and keep top 10
         const topRecs = results
             .sort((a: any, b: any) => b.similarity_score - a.similarity_score)
-            .slice(0, 10)
-            .map(({ similarity_score, ...rest }: any) => rest);
+            .slice(0, 10);
 
         // 6. Save recommendations to DB
         if (topRecs.length > 0) {
+            const finalRecs = topRecs.map(({ similarity_score, ...rest }) => rest);
+            
             await supabase
                 .from('recommendations')
                 .delete()
@@ -143,7 +125,7 @@ Deno.serve(async (req) => {
 
             const { error: saveError } = await supabase
                 .from('recommendations')
-                .insert(topRecs);
+                .insert(finalRecs);
             
             if (saveError) throw saveError;
         }
