@@ -35,14 +35,19 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
             });
             
             if (error) {
+                // If the error object has an 'error' property from our JSON response
+                const remoteError = error.context?.json?.error || error.message;
                 console.error("Error generating recommendations:", error);
-                alert("Error al generar recomendaciones. ¿Tienes favoritos añadidos?");
+                alert(`Error al generar recomendaciones: ${remoteError || JSON.stringify(error)}`);
+            } else if (data?.error) {
+                alert(`Error IA: ${data.error}`);
             } else {
                 console.log("Recommendations generated:", data);
                 await fetchRecs();
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error("Error:", err);
+            alert(`Error inesperado: ${err.message || 'Error de conexión'}`);
         } finally {
             setGenerating(false);
         }
