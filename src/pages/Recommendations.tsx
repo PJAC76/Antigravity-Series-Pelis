@@ -35,19 +35,25 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
             });
             
             if (error) {
-                // If the error object has an 'error' property from our JSON response
-                const remoteError = error.context?.json?.error || error.message;
-                console.error("Error generating recommendations:", error);
-                alert(`Error al generar recomendaciones: ${remoteError || JSON.stringify(error)}`);
-            } else if (data?.error) {
-                alert(`Error IA: ${data.error}`);
+                console.error("Invoke error:", error);
+                
+                let detail = "";
+                // Supabase FunctionsHttpError carries the response body in its context/message
+                if (error.context?.json) {
+                    detail = error.context.json.error || JSON.stringify(error.context.json);
+                } else if (error.message) {
+                    detail = error.message;
+                } else {
+                    detail = JSON.stringify(error);
+                }
+
+                alert(`Error IA (Servidor): ${detail}`);
             } else {
                 console.log("Recommendations generated:", data);
                 await fetchRecs();
             }
-        } catch (err: any) {
+        } catch (err) {
             console.error("Error:", err);
-            alert(`Error inesperado: ${err.message || 'Error de conexión'}`);
         } finally {
             setGenerating(false);
         }
