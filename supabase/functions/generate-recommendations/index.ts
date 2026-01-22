@@ -40,27 +40,25 @@ Deno.serve(async (req) => {
         const favoriteIds = favorites.map((f: any) => f.media_item_id);
         console.log(`User ${userId} has ${favoriteIds.length} favorites.`);
         
-        // Fetch top 30 Movies and top 30 Series to ensure diversity
-        // Using a try-catch for the candidates fetch to report specifically if this part fails
-        let movieCandidates = [];
-        let seriesCandidates = [];
-        
-        try {
-            const [{ data: mData, error: mError }, { data: sData, error: sError }] = await Promise.all([
-                supabase
-                    .from('media_items')
-                    .select('*, sources_scores(*)')
-                    .eq('type', 'movie')
-                    .not('id', 'in', favoriteIds)
-                    .limit(30),
-                supabase
-                    .from('media_items')
-                    .select('*, sources_scores(*)')
-                    .eq('type', 'series')
-                    .not('id', 'in', favoriteIds)
-                    .limit(30)
-            ]);
+        // Initialize placeholders for data
+        let movieCandidates: any[] = [];
+        let seriesCandidates: any[] = [];
 
+        try {
+            // Apply favorites filter ONLY if they exist to avoid SQL empty array error
+            let movieQuery = supabase.from('media_items').select('*, sources_scores(*)').eq('type', 'movie').limit(30);
+            let seriesQuery = supabase.from('media_items').select('*, sources_scores(*)').eq('type', 'series').limit(30);
+            
+            if (favoriteIds.length > 0) {
+                movieQuery = movieQuery.not('id', 'in', favoriteIds);
+                seriesQuery = seriesQuery.not('id', 'in', favoriteIds);
+            }
+
+            const [{ data: mData, error: mError }, { data: sData, error: sError }] = await Promise.all([
+                movieQuery,
+                seriesQuery
+            ]);
+            
             if (mError) throw mError;
             if (sError) throw sError;
             
@@ -68,7 +66,7 @@ Deno.serve(async (req) => {
             seriesCandidates = sData || [];
         } catch (fetchErr: any) {
             console.error("Fetch candidates error:", fetchErr);
-            throw new Error(`Error fetching candidates: ${fetchErr.message}`);
+            throw new Error(`CANDIDATE_FETCH_FAILED: ${fetchErr.message}`);
         }
 
         // Combine and remove any unintentional duplicates from candidates
@@ -196,7 +194,7 @@ Deno.serve(async (req) => {
         }
 
         return new Response(JSON.stringify({ error: errorMessage }), { 
-            status: 400,
+            status: 200, // Return 200 so the client can see the JSON error body easily
             headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
     }

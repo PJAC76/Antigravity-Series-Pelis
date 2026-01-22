@@ -39,6 +39,7 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
                 
                 let detail = "Error desconocido al procesar la respuesta.";
                 
+                // Extract from context (common for FunctionsHttpError)
                 if (error.context?.json?.error) {
                     detail = error.context.json.error;
                 } else if (error.message) {
@@ -50,6 +51,10 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
                 }
 
                 alert(`Error IA (Servidor): ${detail}\n\nRevisa la consola (F12) para más detalles.`);
+            } else if (data && data.error) {
+                // Handle status 200 but contains an error object
+                console.error("Error returned in data:", data.error);
+                alert(`Error IA (Procesamiento): ${data.error}`);
             } else {
                 console.log("Recommendations generated:", data);
                 await fetchRecs();
