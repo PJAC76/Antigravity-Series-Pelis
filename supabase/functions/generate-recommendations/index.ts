@@ -8,9 +8,12 @@ Deno.serve(async (req) => {
 
     try {
         const supabase = getSupabaseClient();
-        const { userId } = await req.json();
+        const body = await req.json().catch(() => ({}));
+        const { userId } = body;
 
-        if (!userId) throw new Error("userId is required");
+        console.log("Generating recommendations for user:", userId);
+
+        if (!userId) throw new Error("userId_is_required");
 
         // 1. Get user favorites
         const { data: favorites, error: favError } = await supabase
@@ -18,10 +21,14 @@ Deno.serve(async (req) => {
             .select('media_item_id, media_items(*)')
             .eq('user_id', userId);
 
-        if (favError) throw favError;
+        if (favError) {
+            console.error("Favorites fetch error:", favError);
+            throw new Error(`FAV_FETCH_ERROR: ${favError.message}`);
+        }
+
         if (!favorites || favorites.length === 0) {
             return new Response(JSON.stringify({
-                message: "No favorites found. Add some to get recommendations.",
+                message: "No favorites found.",
                 recommendations: []
             }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
@@ -34,29 +41,25 @@ Deno.serve(async (req) => {
             }
         });
 
-        // 3. Find candidate items (balanced Movies and Series)
-        const favoriteIds = favorites.map((f: any) => f.media_item_id);
-        console.log(`User ${userId} has ${favoriteIds.length} favorites.`);
+        // 3. Find candidate items
+        const favoriteIds = favorites.map((f: any) => f.media_item_id).filter((id: string) => !!id);
         
         let movieCandidates = [];
         let seriesCandidates = [];
         
         try {
-            // PostgREST .not('id', 'in', '(uuid1,uuid2)') is safer for raw filtering
-            const filter = `(${favoriteIds.join(',')})`;
-            
             const [{ data: mData, error: mError }, { data: sData, error: sError }] = await Promise.all([
                 supabase
                     .from('media_items')
                     .select('*, sources_scores(*)')
                     .eq('type', 'movie')
-                    .not('id', 'in', filter)
+                    .not('id', 'in', favoriteIds)
                     .limit(30),
                 supabase
                     .from('media_items')
                     .select('*, sources_scores(*)')
                     .eq('type', 'series')
-                    .not('id', 'in', filter)
+                    .not('id', 'in', favoriteIds)
                     .limit(30)
             ]);
 
@@ -66,38 +69,31 @@ Deno.serve(async (req) => {
             movieCandidates = mData || [];
             seriesCandidates = sData || [];
         } catch (fetchErr: any) {
-            console.error("Fetch candidates error:", fetchErr);
-            throw new Error(`Error fetching candidates: ${fetchErr.message}`);
+            console.error("Candidates fetch failed:", fetchErr);
+            throw new Error(`CANDIDATES_FETCH_FAILED: ${fetchErr.message || 'Unknown error'}`);
         }
 
         const candidates = [...movieCandidates, ...seriesCandidates];
-        console.log(`Found ${candidates.length} candidates for recommendations.`);
 
-        if (candidates.length === 0) throw new Error("No candidates found (database might be empty)");
+        if (candidates.length === 0) throw new Error("DATABASE_EMPTY_OR_NO_CANDIDATES");
 
         // 4. Recommendation Logic
         const results = candidates.map((item: any) => {
             let score = 0;
-            const commonGenres = item.genres?.filter((g: string) => favoriteGenres.has(g)) || [];
+            const itemGenres = item.genres || [];
+            const commonGenres = itemGenres.filter((g: string) => favoriteGenres.has(g));
             score += commonGenres.length * 2;
 
             let finalReason = "";
             const scores = item.sources_scores || [];
-            const avgScore = scores.reduce((acc: number, s: any) => acc + s.score_normalized, 0) / (scores.length || 1);
+            const avgScore = scores.length > 0 
+                ? scores.reduce((acc: number, s: any) => acc + (s.score_normalized || 0), 0) / scores.length 
+                : 0;
             
-            const reddit = scores.find((s: any) => s.source === "reddit");
-            const filmaffinity = scores.find((s: any) => s.source === "filmaffinity");
-            const forocoches = scores.find((s: any) => s.source === "forocoches");
-
             if (commonGenres.length > 0 && avgScore > 7.5) {
-                const genre = commonGenres[0];
-                finalReason = `Match Directo: Tu afinidad por el género ${genre} encaja perfectamente con este título (${avgScore.toFixed(1)} de media).`;
+                finalReason = `Match Directo: Tu afinidad por el género ${commonGenres[0]} encaja con este título (${avgScore.toFixed(1)} de media).`;
             } else if (avgScore > 8.5) {
                 finalReason = `Consenso Crítico: Con una media de ${avgScore.toFixed(1)}, '${item.title}' es una apuesta segura validada por datos.`;
-            } else if ((reddit?.score_normalized ?? 0) > 8.2 && (filmaffinity?.score_normalized ?? 0) < 7.0 && filmaffinity) {
-                finalReason = `Fenómeno de Nicho: La disparidad entre crítica y Reddit revela una obra de culto que te sorprenderá.`;
-            } else if ((forocoches?.score_normalized ?? 0) > 8.5) {
-                finalReason = `Alto Impacto: Forocoches destaca '${item.title}' por su ritmo y capacidad de entretenimiento.`;
             } else {
                 finalReason = `Validación Estadística: '${item.title}' presenta métricas sólidas. Una elección racional basada en la consistencia de guion.`;
             }
@@ -112,12 +108,11 @@ Deno.serve(async (req) => {
 
         const topRecs = results
             .sort((a: any, b: any) => b.similarity_score - a.similarity_score)
-            .slice(0, 10);
+            .slice(0, 10)
+            .map(({ similarity_score, ...rest }) => rest);
 
         // 6. Save recommendations to DB
         if (topRecs.length > 0) {
-            const finalRecs = topRecs.map(({ similarity_score, ...rest }) => rest);
-            
             await supabase
                 .from('recommendations')
                 .delete()
@@ -125,18 +120,21 @@ Deno.serve(async (req) => {
 
             const { error: saveError } = await supabase
                 .from('recommendations')
-                .insert(finalRecs);
+                .insert(topRecs);
             
-            if (saveError) throw saveError;
+            if (saveError) {
+                console.error("Save recommendations error:", saveError);
+                throw new Error(`SAVE_ERROR: ${saveError.message}`);
+            }
         }
 
         return new Response(JSON.stringify({ success: true, count: topRecs.length }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
 
-    } catch (error) {
-        console.error("ERROR IN RECOMMENDATIONS:", error);
-        return new Response(JSON.stringify({ error: error.message }), { 
+    } catch (error: any) {
+        console.error("CRITICAL FUNCTION ERROR:", error);
+        return new Response(JSON.stringify({ error: error.message || "Unknown error" }), { 
             status: 400,
             headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
