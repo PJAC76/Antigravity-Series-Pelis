@@ -33,16 +33,28 @@ Deno.serve(async (req) => {
             f.media_items.genres?.forEach((g: string) => favoriteGenres.add(g));
         });
 
-        // 3. Find candidate items (not in favorites)
-        // 3. Find candidate items (not in favorites)
+        // 3. Find candidate items (balanced Movies and Series)
         const favoriteIds = favorites.map((f: any) => f.media_item_id);
-        const { data: candidates, error: candError } = await supabase
-            .from('media_items')
-            .select('*, sources_scores(*)')
-            .not('id', 'in', `(${favoriteIds.join(',')})`)
-            .limit(50);
+        
+        // Fetch top 30 Movies and top 30 Series to ensure diversity
+        const [{ data: movieCandidates }, { data: seriesCandidates }] = await Promise.all([
+            supabase
+                .from('media_items')
+                .select('*, sources_scores(*)')
+                .eq('type', 'movie')
+                .not('id', 'in', `(${favoriteIds.map((id: string) => `"${id}"`).join(',')})`)
+                .limit(30),
+            supabase
+                .from('media_items')
+                .select('*, sources_scores(*)')
+                .eq('type', 'series')
+                .not('id', 'in', `(${favoriteIds.map((id: string) => `"${id}"`).join(',')})`)
+                .limit(30)
+        ]);
 
-        if (candError) throw candError;
+        const candidates = [...(movieCandidates || []), ...(seriesCandidates || [])];
+
+        if (!candidates || candidates.length === 0) throw new Error("No candidates found for recommendations");
 
         // 4. Recommendation Logic (Similarity Score + Analytical Insights)
         const results = candidates.map((item: any) => {
@@ -60,10 +72,6 @@ Deno.serve(async (req) => {
             const reddit = scores.find((s: any) => s.source === "reddit");
             const filmaffinity = scores.find((s: any) => s.source === "filmaffinity");
             const forocoches = scores.find((s: any) => s.source === "forocoches");
-
-            const isRecent = item.year >= 2024;
-            // Note: 'providers' is not usually fetched in list view for performance, 
-            // but we can rely on data characteristics we have.
 
             // Logic 0: Personalized Match (High Priority)
             if (commonGenres.length > 0 && avgScore > 7.5) {
@@ -113,9 +121,6 @@ Deno.serve(async (req) => {
                 media_item_id: item.id,
                 reason_text: finalReason,
                 similarity_score: score
-                // Note: We are currently NOT saving the 'variant' to the DB recommendations table 
-                // because the schema might not support it (reason_text type text). 
-                // Just the text upgrade is a huge win. 
             };
         });
 
@@ -126,13 +131,17 @@ Deno.serve(async (req) => {
             .map(({ similarity_score, ...rest }: any) => rest);
 
         // 6. Save recommendations to DB
-        // Clear old recommendations for this user first to avoid stale data piling up? 
-        // Upsert handles updates, but maybe we want fresh set.
-        // For now, let's stick to upsert but typically valid recs change. 
+        // We delete old ones and insert new ones to avoid requiring a specific unique constraint (more robust)
         if (topRecs.length > 0) {
+            await supabase
+                .from('recommendations')
+                .delete()
+                .eq('user_id', userId);
+
             const { error: saveError } = await supabase
                 .from('recommendations')
-                .upsert(topRecs, { onConflict: 'user_id, media_item_id' });
+                .insert(topRecs);
+            
             if (saveError) throw saveError;
         }
 
@@ -143,7 +152,7 @@ Deno.serve(async (req) => {
     } catch (error) {
         console.error(error);
         return new Response(JSON.stringify({ error: error.message }), { 
-            status: 200,
+            status: 400,
             headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
     }
