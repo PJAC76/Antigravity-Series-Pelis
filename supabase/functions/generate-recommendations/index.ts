@@ -9,9 +9,12 @@ Deno.serve(async (req) => {
 
     try {
         const supabase = getSupabaseClient();
-        const { userId } = await req.json();
+        const body = await req.json();
+        const userId = body.userId;
 
-        if (!userId) throw new Error("userId is required");
+        console.log(`[RECOMMENDATIONS] Processing request for userId: ${userId}`);
+
+        if (!userId) throw new Error("MISSING_USER_ID: The request body must contain a valid userId UUID.");
 
         // 1. Get user favorites
         const { data: favorites, error: favError } = await supabase
@@ -68,13 +71,15 @@ Deno.serve(async (req) => {
             throw new Error(`Error fetching candidates: ${fetchErr.message}`);
         }
 
+        // Combine and remove any unintentional duplicates from candidates
         const candidates = [...movieCandidates, ...seriesCandidates];
-        console.log(`Found ${candidates.length} candidates for recommendations.`);
+        const uniqueCandidates = Array.from(new Map(candidates.map((c: any) => [c.id, c])).values());
+        console.log(`[RECOMMENDATIONS] Found ${uniqueCandidates.length} unique candidates.`);
 
-        if (candidates.length === 0) throw new Error("No candidates found (database might be empty)");
+        if (uniqueCandidates.length === 0) throw new Error("NO_CANDIDATES: Database has no movies/series that are not in your favorites.");
 
         // 4. Recommendation Logic (Similarity Score + Analytical Insights)
-        const results = candidates.map((item: any) => {
+        const results = uniqueCandidates.map((item: any) => {
             let score = 0;
             const commonGenres = item.genres?.filter((g: string) => favoriteGenres.has(g)) || [];
             score += commonGenres.length * 2; // Genre weight
@@ -179,8 +184,18 @@ Deno.serve(async (req) => {
         });
 
     } catch (error: any) {
-        console.error("ERROR IN RECOMMENDATIONS:", error);
-        return new Response(JSON.stringify({ error: error.message }), { 
+        console.error("[RECOMMENDATIONS] CRITICAL ERROR:", error);
+        
+        let errorMessage = "SERVER_ERROR";
+        if (error instanceof Error) {
+            errorMessage = error.message;
+        } else if (typeof error === 'string') {
+            errorMessage = error;
+        } else {
+            errorMessage = JSON.stringify(error) || "UNSPECIFIED_ERROR";
+        }
+
+        return new Response(JSON.stringify({ error: errorMessage }), { 
             status: 400,
             headers: { ...corsHeaders, "Content-Type": "application/json" }
         });

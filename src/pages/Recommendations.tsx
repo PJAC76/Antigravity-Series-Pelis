@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Layout } from '../components/Layout';
 import { mediaService } from '../services/mediaService';
 import { Sparkles, Loader2, Wand2, Film, Tv } from 'lucide-react';
@@ -11,7 +11,7 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
 
-    const fetchRecs = async () => {
+    const fetchRecs = useCallback(async () => {
         setLoading(true);
         try {
             const data = await mediaService.getRecommendations(userId);
@@ -21,11 +21,11 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [userId]);
 
     useEffect(() => {
         fetchRecs();
-    }, [userId]);
+    }, [fetchRecs]);
 
     const handleGenerateRecommendations = async () => {
         setGenerating(true);
@@ -35,25 +35,28 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
             });
             
             if (error) {
-                console.error("Invoke error:", error);
+                console.error("Full invoke error details:", error);
                 
-                let detail = "";
-                // Supabase FunctionsHttpError carries the response body in its context/message
-                if (error.context?.json) {
-                    detail = error.context.json.error || JSON.stringify(error.context.json);
+                let detail = "Error desconocido al procesar la respuesta.";
+                
+                if (error.context?.json?.error) {
+                    detail = error.context.json.error;
                 } else if (error.message) {
                     detail = error.message;
+                } else if (typeof error === 'string') {
+                    detail = error;
                 } else {
                     detail = JSON.stringify(error);
                 }
 
-                alert(`Error IA (Servidor): ${detail}`);
+                alert(`Error IA (Servidor): ${detail}\n\nRevisa la consola (F12) para más detalles.`);
             } else {
                 console.log("Recommendations generated:", data);
                 await fetchRecs();
             }
         } catch (err) {
             console.error("Error:", err);
+            alert(`Error de conexión: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
             setGenerating(false);
         }
