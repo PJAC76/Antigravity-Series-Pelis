@@ -1,0 +1,18 @@
+name: Daily Content Update
+
+on:
+  schedule:
+    # Runs at 00:00 and 12:00 UTC every day
+    - cron: '0 0,12 * * *'
+  workflow_dispatch: # Allows manual triggering from the Actions tab
+
+jobs:
+  run-daily-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invoke Supabase Daily Update Function
+        run: |
+          curl -i -X POST "https://bimgkjnxivkrhghpxuoj.supabase.co/functions/v1/daily-update" \
+          -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d '{}'
