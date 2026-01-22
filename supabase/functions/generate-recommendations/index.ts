@@ -1,5 +1,4 @@
 import { getSupabaseClient } from '../_shared/db.ts';
-
 import { corsHeaders } from '../_shared/cors.ts';
 
 Deno.serve(async (req) => {
@@ -30,27 +29,32 @@ Deno.serve(async (req) => {
         // 2. Extract favorite genres and keywords from titles
         const favoriteGenres = new Set<string>();
         favorites.forEach((f: any) => {
-            f.media_items.genres?.forEach((g: string) => favoriteGenres.add(g));
+            if (f.media_items && f.media_items.genres) {
+                f.media_items.genres.forEach((g: string) => favoriteGenres.add(g));
+            }
         });
 
         // 3. Find candidate items (balanced Movies and Series)
         const favoriteIds = favorites.map((f: any) => f.media_item_id);
         
         // Fetch top 30 Movies and top 30 Series to ensure diversity
-        const [{ data: movieCandidates }, { data: seriesCandidates }] = await Promise.all([
+        const [{ data: movieCandidates, error: movieError }, { data: seriesCandidates, error: seriesError }] = await Promise.all([
             supabase
                 .from('media_items')
                 .select('*, sources_scores(*)')
                 .eq('type', 'movie')
-                .not('id', 'in', `(${favoriteIds.map((id: string) => `"${id}"`).join(',')})`)
+                .not('id', 'in', favoriteIds)
                 .limit(30),
             supabase
                 .from('media_items')
                 .select('*, sources_scores(*)')
                 .eq('type', 'series')
-                .not('id', 'in', `(${favoriteIds.map((id: string) => `"${id}"`).join(',')})`)
+                .not('id', 'in', favoriteIds)
                 .limit(30)
         ]);
+
+        if (movieError) throw movieError;
+        if (seriesError) throw seriesError;
 
         const candidates = [...(movieCandidates || []), ...(seriesCandidates || [])];
 
@@ -131,7 +135,6 @@ Deno.serve(async (req) => {
             .map(({ similarity_score, ...rest }: any) => rest);
 
         // 6. Save recommendations to DB
-        // We delete old ones and insert new ones to avoid requiring a specific unique constraint (more robust)
         if (topRecs.length > 0) {
             await supabase
                 .from('recommendations')
@@ -150,7 +153,7 @@ Deno.serve(async (req) => {
         });
 
     } catch (error) {
-        console.error(error);
+        console.error("ERROR IN RECOMMENDATIONS:", error);
         return new Response(JSON.stringify({ error: error.message }), { 
             status: 400,
             headers: { ...corsHeaders, "Content-Type": "application/json" }
