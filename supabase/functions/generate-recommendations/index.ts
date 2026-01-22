@@ -11,7 +11,7 @@ Deno.serve(async (req) => {
     }
 
     try {
-        console.log("[RECS] Starting balanced recommendation logic...");
+        console.log("[RECS] Starting updated recommendation logic (20 items, >2001)...");
         const supabase = getSupabaseClient();
         
         let body;
@@ -50,13 +50,17 @@ Deno.serve(async (req) => {
 
         const favoriteIds = favorites.map((f: any) => f.media_item_id);
         
-        // 3. Fetch candidates (separate pools)
+        // 3. Calculation for 25-year filter (Current year is 2026, so >= 2001)
+        const minYear = 2001;
+
+        // 4. Fetch candidates (separate pools with year filter)
         const fetchPool = async (type: 'movie' | 'series') => {
             let query = supabase
                 .from('media_items')
                 .select('*, sources_scores(*)')
                 .eq('type', type)
-                .limit(60);
+                .gte('year', minYear) // New: 25 year filter
+                .limit(100); // Increased limit to ensure enough candidates
             
             if (favoriteIds.length > 0) {
                 query = query.not('id', 'in', `(${favoriteIds.join(',')})`);
@@ -72,9 +76,9 @@ Deno.serve(async (req) => {
             fetchPool('series')
         ]);
 
-        console.log(`[RECS] Found ${movies.length} movies and ${series.length} series candidates.`);
+        console.log(`[RECS] Found ${movies.length} movies and ${series.length} series candidates post-2001.`);
 
-        // 4. Scoring Logic Helper
+        // 5. Scoring Logic Helper
         const scoreItem = (item: any) => {
             let score = 0;
             const commonGenres = item.genres?.filter((g: string) => favoriteGenres.has(g)) || [];
@@ -85,7 +89,6 @@ Deno.serve(async (req) => {
                 ? scores.reduce((acc: number, s: any) => acc + s.score_normalized, 0) / scores.length 
                 : 0;
             
-            // Artificial boost for high ratings to ensure quality
             score += avgScore;
 
             let finalReason = "";
@@ -103,27 +106,19 @@ Deno.serve(async (req) => {
             };
         };
 
-        // 5. Build Balanced Top 10 (5 movies + 5 series)
+        // 6. Build Balanced Top 20 (10 movies + 10 series)
         const scoredMovies = movies.map(scoreItem).sort((a, b) => b.similarity_score - a.similarity_score);
         const scoredSeries = series.map(scoreItem).sort((a, b) => b.similarity_score - a.similarity_score);
 
-        const topMovies = scoredMovies.slice(0, 5);
-        const topSeries = scoredSeries.slice(0, 5);
+        const topMovies = scoredMovies.slice(0, 10);
+        const topSeries = scoredSeries.slice(0, 10);
 
-        // If one category is empty, fill with the other up to 10 total
         let finalRecs = [...topMovies, ...topSeries];
         
-        if (finalRecs.length < 10) {
-            if (topMovies.length === 5 && scoredMovies.length > 5) {
-                finalRecs = [...finalRecs, ...scoredMovies.slice(5, 10 - finalRecs.length)];
-            } else if (topSeries.length === 5 && scoredSeries.length > 5) {
-                finalRecs = [...finalRecs, ...scoredSeries.slice(5, 10 - finalRecs.length)];
-            }
-        }
-
-        // 6. Save and Return
+        // 7. Save and Return
         if (finalRecs.length > 0) {
             const cleanRecs = finalRecs.map(({ similarity_score, ...rest }) => rest);
+            // Clear old ones and insert new batch
             await supabase.from('recommendations').delete().eq('user_id', userId);
             const { error: saveError } = await supabase.from('recommendations').insert(cleanRecs);
             if (saveError) throw new Error(`DB_INSERT_ERROR: ${saveError.message}`);
