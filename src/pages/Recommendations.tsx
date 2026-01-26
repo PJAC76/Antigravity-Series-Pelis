@@ -3,7 +3,6 @@ import { Layout } from '../components/Layout';
 import { mediaService } from '../services/mediaService';
 import { Sparkles, Loader2, Wand2, Film, Tv } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
 
 export const RecommendationsPage = ({ userId }: { userId: string }) => {
     const navigate = useNavigate();
