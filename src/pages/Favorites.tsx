@@ -67,18 +67,33 @@ export const FavoritesPage = () => {
         setAddMessage(null);
         
         try {
-            const { data, error } = await supabase.functions.invoke('search-and-add-media', {
-                body: { 
+            // Get Supabase URL and anon key from environment
+            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+            const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+            
+            if (!supabaseUrl || !supabaseAnonKey) {
+                throw new Error('Configuración de Supabase no encontrada. Verifica las variables de entorno.');
+            }
+
+            // Call Edge Function directly with fetch
+            const response = await fetch(`${supabaseUrl}/functions/v1/search-and-add-media`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${supabaseAnonKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
                     title: searchQuery.trim(), 
                     type: addType,
                     year: yearInput ? parseInt(yearInput) : undefined
-                }
+                })
             });
-            
-            if (error) {
-                console.error('Edge Function invocation error:', error);
-                throw new Error(error.message || 'Error al invocar la función');
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
+
+            const data = await response.json();
             
             if (data?.error) {
                 setAddMessage({ type: 'error', text: data.error });
