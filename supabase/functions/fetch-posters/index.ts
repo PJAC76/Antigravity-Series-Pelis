@@ -18,21 +18,47 @@ Deno.serve(async (req) => {
             .from('media_items')
             .select('id, title, year, type, poster_url, synopsis_short')
             .order('created_at', { ascending: false })
-            .limit(100);
+            .limit(10); // Reduced limit for safety
 
         if (error) throw error;
-        if (!allItems) {
-            console.log('No items found in database');
-            return new Response(JSON.stringify({ 
-                success: true, 
-                processed: 0,
-                updated: 0,
-                failed: 0,
-                message: 'No items found to process'
-            }), {
-                headers: { ...corsHeaders, "Content-Type": "application/json" }
-            });
+
+        // TARGETED REPAIR FOR "The Last of Us" and "Spider-Man"
+        // We do this explicitly to ensure they are fixed despite batch logic
+        const targets = ['The Last of Us', 'Spider-Man: Across the Spider-Verse'];
+        
+        for (const title of targets) {
+             const { data: specificItems } = await supabase
+                .from('media_items')
+                .select('*')
+                .ilike('title', `%${title}%`);
+                
+             if (specificItems && specificItems.length > 0) {
+                 for (const targetItem of specificItems) {
+                     console.log(`🎯 Force Repairing: ${targetItem.title} (${targetItem.id})`);
+                     
+                     // Get TMDB Data
+                     const mediaType = targetItem.type === 'series' ? 'tv' : 'movie';
+                     const searchUrl = `${TMDB_BASE_URL}/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(targetItem.title)}&language=es-ES`;
+                     const resp = await fetch(searchUrl);
+                     const data = await resp.json();
+                     
+                     if (data.results?.[0]?.overview) {
+                         const overview = data.results[0].overview;
+                         console.log(`   Found TMDB Overview: ${overview.length} chars`);
+                         
+                         const { error: upErr } = await supabase
+                            .from('media_items')
+                            .update({ synopsis_short: overview })
+                            .eq('id', targetItem.id);
+                            
+                         if (upErr) console.error(`   ❌ DB Update Failed: ${upErr.message}`);
+                         else console.log(`   ✅ DB Update Success`);
+                     }
+                 }
+             }
         }
+        
+        // Resume normal batch processing...
 
         // Filter: Detect items with missing or suspiciously short synopses
         // UPDATED: Now we consider synopses with exactly 200 chars as truncated
