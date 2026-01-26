@@ -72,12 +72,22 @@ export const Home = () => {
         fetchRankings();
     }, [rankingType, selectedGenres]);
 
-    const toggleGenre = (genre: string) => {
-        setSelectedGenres(prev =>
-            prev.includes(genre)
-                ? prev.filter(g => g !== genre)
-                : [...prev, genre]
-        );
+    const toggleGenre = (genre: string | string[]) => {
+        const genresToToggle = Array.isArray(genre) ? genre : [genre];
+        
+        setSelectedGenres(prev => {
+            // Logic: If ANY of the input genres are currently selected, we assume the user wants to specificially Deselect that group.
+            // (Matches the UI logic where the button appears active)
+            const isAnySelected = genresToToggle.some(g => prev.includes(g));
+            
+            if (isAnySelected) {
+                // Remove ALL associated values from selection
+                return prev.filter(g => !genresToToggle.includes(g));
+            } else {
+                // Add ALL associated values
+                return [...prev, ...genresToToggle];
+            }
+        });
     };
 
     const handleToggleFavorite = async (id: string) => {
