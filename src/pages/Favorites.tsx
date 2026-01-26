@@ -70,7 +70,7 @@ export const FavoritesPage = () => {
                         title={item.title}
                         year={item.year}
                         genres={item.genres || []}
-                        score={0}
+                        score={item.aggregated_scores?.[0]?.final_score || 0}
                         type={item.type}
                         synopsis={item.synopsis_short}
                         posterUrl={item.poster_url}

@@ -1,21 +1,5 @@
 import { supabase } from '../lib/supabase';
 
-export const authService = {
-    // Get current session
-    getSession: async () => {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        return session;
-    },
-
-    // Sign out
-    signOut: async () => {
-        const { error } = await supabase.auth.signOut();
-        if (error) throw error;
-    }
-    // Signup and Login will be implemented with UI forms
-};
-
 export const mediaService = {
     // Fetch Top 10 rankings with optional genre filtering
     getTopRankings: async (type: 'historical' | 'recent', genres?: string[]) => {
@@ -72,7 +56,12 @@ export const mediaService = {
         const { data, error } = await supabase
             .from('user_favorites')
             .select(`
-        media_items (*)
+        media_items (
+          *,
+          aggregated_scores (
+            final_score
+          )
+        )
       `)
             .eq('user_id', userId);
 
