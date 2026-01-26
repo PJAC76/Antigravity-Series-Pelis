@@ -1,0 +1,5 @@
+# Vercel Deployment Trigger
+
+This file change triggers a Vercel deployment to ensure latest frontend changes are deployed.
+
+Last updated: 2026-01-26T18:17:49+01:00
