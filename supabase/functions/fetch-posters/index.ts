@@ -21,17 +21,32 @@ Deno.serve(async (req) => {
             .limit(100);
 
         if (error) throw error;
+        if (!allItems) {
+            console.log('No items found in database');
+            return new Response(JSON.stringify({ 
+                success: true, 
+                processed: 0,
+                updated: 0,
+                failed: 0,
+                message: 'No items found to process'
+            }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
 
         // Filter: Detect items with missing or suspiciously short synopses
-        // (Original truncation was often at ~200 chars or missing entirely)
+        // UPDATED: Now we consider synopses with exactly 200 chars as truncated
+        // as well as anything shorter than 300 chars (to catch edge cases)
         const items = allItems.filter((item: any) => 
             !item.synopsis_short || 
-            item.synopsis_short.length < 600
-        ).slice(0, 20); // Process only 20 at a time to prevent Edge Function timeout (10s limit)
+            item.synopsis_short.length === 200 ||  // Exactly 200 = likely truncated
+            item.synopsis_short.length < 300       // Less than 300 = potentially incomplete
+        ).slice(0, 25); // Process 25 at a time to prevent Edge Function timeout
 
         console.log(`Found ${items?.length || 0} items needing repair in this batch`);
 
         let updated = 0;
+        let failed = 0;
 
         for (const item of items) {
             try {
@@ -44,6 +59,7 @@ Deno.serve(async (req) => {
                 const response = await fetch(searchUrl);
                 if (!response.ok) {
                     console.warn(`TMDB search failed for ${item.title}`);
+                    failed++;
                     continue;
                 }
 
@@ -53,6 +69,14 @@ Deno.serve(async (req) => {
                     const result = data.results[0];
                     const posterPath = result.poster_path;
                     const tmdbId = result.id;
+                    const overview = result.overview;
+                    
+                    // Skip if still no overview available from TMDB
+                    if (!overview || overview.trim().length === 0) {
+                        console.warn(`No overview available from TMDB for ${item.title}`);
+                        failed++;
+                        continue;
+                    }
                     
                     // Fetch Watch Providers
                     let providersData = null;
@@ -74,24 +98,28 @@ Deno.serve(async (req) => {
                          console.warn(`Failed to fetch providers for ${item.title}`);
                     }
 
-                    if (posterPath || providersData) {
-                        const posterUrl = posterPath ? `${TMDB_IMAGE_BASE}${posterPath}` : item.poster_url;
-                        
-                        // Update the media item with poster AND providers
-                        const { error: updateError } = await supabase
-                            .from('media_items')
-                            .update({ 
-                                poster_url: posterUrl,
-                                synopsis_short: result.overview || null,
-                                providers: providersData
-                            })
-                            .eq('id', item.id);
+                    const posterUrl = posterPath ? `${TMDB_IMAGE_BASE}${posterPath}` : item.poster_url;
+                    
+                    // Update the media item with full synopsis, poster AND providers
+                    const { error: updateError } = await supabase
+                        .from('media_items')
+                        .update({ 
+                            poster_url: posterUrl,
+                            synopsis_short: overview,  // Full overview from TMDB
+                            providers: providersData
+                        })
+                        .eq('id', item.id);
 
-                        if (!updateError) {
-                            updated++;
-                            console.log(`Updated data for: ${item.title}`);
-                        }
+                    if (!updateError) {
+                        updated++;
+                        console.log(`✅ Updated ${item.title} (synopsis: ${overview.length} chars)`);
+                    } else {
+                        console.error(`❌ Update error for ${item.title}:`, updateError);
+                        failed++;
                     }
+                } else {
+                    console.warn(`No TMDB results for ${item.title}`);
+                    failed++;
                 }
                 
                 // Small delay to respect rate limits
@@ -99,13 +127,16 @@ Deno.serve(async (req) => {
                 
             } catch (itemError) {
                 console.error(`Error processing ${item.title}:`, itemError);
+                failed++;
             }
         }
 
         return new Response(JSON.stringify({ 
             success: true, 
             processed: items?.length || 0,
-            updated 
+            updated,
+            failed,
+            message: `Successfully updated ${updated} items, ${failed} failed`
         }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
