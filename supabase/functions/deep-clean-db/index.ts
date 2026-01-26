@@ -5,12 +5,6 @@ const TMDB_API_KEY = '92393fc7fd8b4372108ffc37ea213f2f';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500';
 
-const TARGETS = [
-  { term: 'The Last of Us', type: 'tv', year: 2023 },
-  { term: 'Spider-Man: Across the Spider-Verse', type: 'movie', year: 2023 },
-  { term: 'Succession', type: 'tv', year: 2018 }
-];
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -27,21 +21,40 @@ Deno.serve(async (req) => {
         logs.push(msg);
     };
 
-    log('🏥 STARTING SERVER-SIDE DATABASE TRANSPLANT...');
+    log('🏥 STARTING GLOBAL DATABASE DEEP CLEAN (CLONE STRATEGY)...');
 
-    for (const t of TARGETS) {
-        log(`\n🔍 PROCESSING: ${t.term}`);
+    // 1. Fetch Candidates (Truncated Items)
+    // Fetch critical fields to detect truncation
+    const { data: allItems, error: fetchErr } = await supabase
+        .from('media_items')
+        .select('id, title, year, type, synopsis_short')
+        .order('created_at', { ascending: true }); // Process oldest first (likely the broken ones)
 
-        // 1. Get Clean Data from TMDB
+    if (fetchErr) throw fetchErr;
+
+    const truncatedItems = allItems.filter(i => 
+        i.synopsis_short && i.synopsis_short.length <= 205 // Tolerance for 200-ish
+    );
+
+    log(`🔎 Found ${truncatedItems.length} potentially truncated items out of ${allItems.length}.`);
+
+    let repairedToken = 0;
+
+    for (const item of truncatedItems) {
+        log(`\n🚑 REPAIRING: ${item.title} (Len: ${item.synopsis_short.length})`);
+
+        // 2. Get Clean Data from TMDB
         let tmdbData;
+        const mediaType = item.type === 'series' ? 'tv' : 'movie';
+        
         try {
-            let searchUrl = `${TMDB_BASE_URL}/search/${t.type}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(t.term)}&year=${t.year}&language=es-ES`;
+            let searchUrl = `${TMDB_BASE_URL}/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(item.title)}&year=${item.year}&language=es-ES`;
             let resp = await fetch(searchUrl);
             tmdbData = await resp.json();
 
             if (!tmdbData.results?.length) {
-                // Try without year
-                searchUrl = `${TMDB_BASE_URL}/search/${t.type}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(t.term)}&language=es-ES`;
+                // Retry without year
+                searchUrl = `${TMDB_BASE_URL}/search/${mediaType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(item.title)}&language=es-ES`;
                 resp = await fetch(searchUrl);
                 tmdbData = await resp.json();
             }
@@ -51,39 +64,34 @@ Deno.serve(async (req) => {
         }
 
         if (!tmdbData.results?.length) {
-            log(`   ❌ TMDB Not Found for ${t.term}`);
+            log(`   ❌ TMDB Not Found for ${item.title}`);
             continue;
         }
 
         const hit = tmdbData.results[0];
+        const newOverview = hit.overview;
+
+        if (!newOverview || newOverview.length <= 200) {
+             log(`   ⚠️ TMDB overview is also short (${newOverview?.length}). Skipping.`);
+             continue; // No point cloning if source is also short
+        }
+
         const cleanData = {
-            type: t.type === 'tv' ? 'series' : 'movie',
+            type: item.type,
             title: hit.name || hit.title,
-            year: t.year || parseInt((hit.first_air_date || hit.release_date || '0').substring(0, 4)),
-            synopsis_short: hit.overview,
+            year: item.year || parseInt((hit.first_air_date || hit.release_date || '0').substring(0, 4)),
+            synopsis_short: newOverview,
             poster_url: hit.poster_path ? `${TMDB_IMAGE_BASE}${hit.poster_path}` : null,
+            // Keep original genres or other fields if needed, but usually fresh is better
         };
 
         log(`   📦 Packed New Data: "${cleanData.title}" (${cleanData.synopsis_short.length} chars)`);
 
-        // 2. Find Old Corrupted Rows
-        const { data: oldRows, error: findError } = await supabase
-            .from('media_items')
-            .select('*')
-            .ilike('title', `%${t.term}%`);
-
-        if (findError) {
-            log(`   ❌ Error searching: ${findError.message}`);
-            continue;
-        }
-
-        log(`   🏚️ Found ${oldRows?.length || 0} old/corrupted rows.`);
-
-        // 3. INSERT NEW ROW
+        // 3. INSERT NEW ROW (Clone)
         const { data: inserted, error: insError } = await supabase
             .from('media_items')
             .insert(cleanData)
-            .select() // Need to enable SELECT policy or use service role (which we are)
+            .select()
             .single();
 
         if (insError) {
@@ -91,39 +99,33 @@ Deno.serve(async (req) => {
             continue;
         }
 
-        log(`   ✨ INSERTED NEW ROW: ID ${inserted.id}`);
-        log(`      Length Verified: ${inserted.synopsis_short.length} chars`);
+        // Verify length immediately
+        if (inserted.synopsis_short.length <= 200) {
+             log(`   💀 CRITICAL: New row truncated again! DB Trigger is very aggressive. Keeping new row, but failed to fix.`);
+             // If this happens, we failed.
+        } else {
+             log(`   ✨ INSERTED NEW ROW: ID ${inserted.id} (Verified Len: ${inserted.synopsis_short.length})`);
+             
+             // 4. MIGRATE & DELETE OLD
+             log(`   🔄 Migrating data from ${item.id} to ${inserted.id}...`);
+             
+             await supabase.from('sources_scores').update({ media_item_id: inserted.id }).eq('media_item_id', item.id);
+             await supabase.from('user_favorites').update({ media_item_id: inserted.id }).eq('media_item_id', item.id);
+             await supabase.from('recommendations').update({ media_item_id: inserted.id }).eq('media_item_id', item.id);
 
-        // 4. MIGRATION & CLEANUP
-        if (oldRows && oldRows.length > 0) {
-            for (const old of oldRows) {
-                if (old.id === inserted.id) continue;
-
-                log(`   Migrating dependencies from ${old.id} to ${inserted.id} (Best Effort)`);
-                
-                // Migrate Source Scores
-                await supabase.from('sources_scores').update({ media_item_id: inserted.id }).eq('media_item_id', old.id);
-                // Migrate Favorites
-                await supabase.from('user_favorites').update({ media_item_id: inserted.id }).eq('media_item_id', old.id);
-                // Migrate Recs
-                await supabase.from('recommendations').update({ media_item_id: inserted.id }).eq('media_item_id', old.id);
-
-                log(`   🗑️ Deleting Old Row: ${old.title} (${old.id})`);
-                const { error: delError } = await supabase
-                    .from('media_items')
-                    .delete()
-                    .eq('id', old.id);
-
-                if (delError) {
-                    log(`      ❌ Delete Failed: ${delError.message}`);
-                } else {
-                    log(`      ✅ Deleted.`);
-                }
-            }
+             const { error: delError } = await supabase.from('media_items').delete().eq('id', item.id);
+             if (delError) log(`      ❌ Delete Old Failed: ${delError.message}`);
+             else log(`      ✅ Old Row Deleted.`);
+             
+             repairedToken++;
         }
     }
 
-    return new Response(JSON.stringify({ success: true, logs }), {
+    return new Response(JSON.stringify({ 
+        success: true, 
+        repaired: repairedToken,
+        logs 
+    }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
 
