@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { mediaService } from '../services/mediaService';
 import { Sparkles, Loader2, Wand2, Film, Tv } from 'lucide-react';
@@ -11,7 +11,7 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
 
-    const fetchRecs = useCallback(async () => {
+    const fetchRecs = async () => {
         setLoading(true);
         try {
             const data = await mediaService.getRecommendations(userId);
@@ -21,47 +21,50 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
         } finally {
             setLoading(false);
         }
-    }, [userId]);
+    };
 
     useEffect(() => {
         fetchRecs();
-    }, [fetchRecs]);
+    }, [userId]);
 
     const handleGenerateRecommendations = async () => {
         setGenerating(true);
         try {
-            const { data, error } = await supabase.functions.invoke('generate-recommendations', {
-                body: { userId }
-            });
+            // Get Supabase URL and anon key from environment
+            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+            const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
             
-            if (error) {
-                console.error("Full invoke error details:", error);
-                
-                let detail = "Error desconocido al procesar la respuesta.";
-                
-                // Extract from context (common for FunctionsHttpError)
-                if (error.context?.json?.error) {
-                    detail = error.context.json.error;
-                } else if (error.message) {
-                    detail = error.message;
-                } else if (typeof error === 'string') {
-                    detail = error;
-                } else {
-                    detail = JSON.stringify(error);
-                }
+            if (!supabaseUrl || !supabaseAnonKey) {
+                throw new Error('Configuración de Supabase no encontrada. Verifica las variables de entorno.');
+            }
 
-                alert(`Error IA (Servidor): ${detail}\n\nRevisa la consola (F12) para más detalles.`);
-            } else if (data && data.error) {
-                // Handle status 200 but contains an error object
+            // Call Edge Function directly with fetch to avoid CORS issues with SDK custom headers
+            const response = await fetch(`${supabaseUrl}/functions/v1/generate-recommendations`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${supabaseAnonKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ userId })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            
+            if (data && data.error) {
                 console.error("Error returned in data:", data.error);
                 alert(`Error IA (Procesamiento): ${data.error}`);
             } else {
                 console.log("Recommendations generated:", data);
                 await fetchRecs();
             }
-        } catch (err) {
-            console.error("Error:", err);
-            alert(`Error de conexión: ${err instanceof Error ? err.message : String(err)}`);
+        } catch (err: any) {
+            console.error("Error generating recommendations:", err);
+            const errorMessage = err?.message || 'Error desconocido';
+            alert(`Error IA: ${errorMessage}\n\nRevisa la consola para más detalles.`);
         } finally {
             setGenerating(false);
         }
