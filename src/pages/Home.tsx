@@ -9,8 +9,13 @@ import { Film, Tv } from 'lucide-react';
 
 export const Home = () => {
     const navigate = useNavigate();
-    const [rankingType, setRankingType] = useState<'historical' | 'recent'>('recent');
-    const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+    const [rankingType, setRankingType] = useState<'historical' | 'recent'>(() => {
+        return (localStorage.getItem('rankingType') as 'historical' | 'recent') || 'recent';
+    });
+    const [selectedGenres, setSelectedGenres] = useState<string[]>(() => {
+        const saved = localStorage.getItem('selectedGenres');
+        return saved ? JSON.parse(saved) : [];
+    });
     const [movies, setMovies] = useState<any[]>([]);
     const [series, setSeries] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -47,6 +52,10 @@ export const Home = () => {
         const fetchRankings = async () => {
             setLoading(true);
             try {
+                // Save to localStorage
+                localStorage.setItem('rankingType', rankingType);
+                localStorage.setItem('selectedGenres', JSON.stringify(selectedGenres));
+
                 const data = await mediaService.getTopRankings(rankingType, selectedGenres);
                 // Separate movies and series
                 const movieItems = (data || []).filter((r: any) => r.media_items.type === 'movie');
