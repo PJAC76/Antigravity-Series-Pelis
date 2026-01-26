@@ -75,10 +75,15 @@ export const FavoritesPage = () => {
                 }
             });
             
-            if (error) throw error;
+            if (error) {
+                console.error('Edge Function invocation error:', error);
+                throw new Error(error.message || 'Error al invocar la función');
+            }
             
-            if (data.error) {
+            if (data?.error) {
                 setAddMessage({ type: 'error', text: data.error });
+            } else if (!data?.success) {
+                setAddMessage({ type: 'error', text: 'Respuesta inesperada del servidor' });
             } else {
                 // Auto-add to favorites
                 await mediaService.toggleFavorite(user.id, data.mediaItemId);
@@ -100,7 +105,8 @@ export const FavoritesPage = () => {
             }
         } catch (err: any) {
             console.error('Error adding media:', err);
-            setAddMessage({ type: 'error', text: err.message || 'Error al procesar la solicitud' });
+            const errorMessage = err?.message || err?.error?.message || 'Error al procesar la solicitud';
+            setAddMessage({ type: 'error', text: errorMessage });
         } finally {
             setIsAdding(false);
         }
