@@ -6,6 +6,7 @@ import { mediaService } from '../services/mediaService';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { Film, Tv } from 'lucide-react';
+import { cleanMediaList } from '../utils/deduplication';
 
 export const Home = () => {
     const navigate = useNavigate();
@@ -57,9 +58,19 @@ export const Home = () => {
                 localStorage.setItem('selectedGenres', JSON.stringify(selectedGenres));
 
                 const data = await mediaService.getTopRankings(rankingType, selectedGenres);
-                // Separate movies and series
-                const movieItems = (data || []).filter((r: any) => r.media_items.type === 'movie');
-                const seriesItems = (data || []).filter((r: any) => r.media_items.type === 'series');
+                // Separate movies and series, then deduplicate and filter blacklisted
+                const allMovies = (data || []).filter((r: any) => r.media_items.type === 'movie');
+                const allSeries = (data || []).filter((r: any) => r.media_items.type === 'series');
+                const movieItems = cleanMediaList(
+                    allMovies,
+                    (r: any) => r.media_items.title,
+                    (r: any) => r.final_score ?? 0
+                );
+                const seriesItems = cleanMediaList(
+                    allSeries,
+                    (r: any) => r.media_items.title,
+                    (r: any) => r.final_score ?? 0
+                );
                 setMovies(movieItems);
                 setSeries(seriesItems);
             } catch (err) {
@@ -76,15 +87,11 @@ export const Home = () => {
         const genresToToggle = Array.isArray(genre) ? genre : [genre];
         
         setSelectedGenres(prev => {
-            // Logic: If ANY of the input genres are currently selected, we assume the user wants to specificially Deselect that group.
-            // (Matches the UI logic where the button appears active)
             const isAnySelected = genresToToggle.some(g => prev.includes(g));
             
             if (isAnySelected) {
-                // Remove ALL associated values from selection
                 return prev.filter(g => !genresToToggle.includes(g));
             } else {
-                // Add ALL associated values
                 return [...prev, ...genresToToggle];
             }
         });
