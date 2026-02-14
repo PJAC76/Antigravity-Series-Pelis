@@ -3,7 +3,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 
 /**
  * One-shot cleanup edge function to:
- * 1. DELETE blacklisted items (el hilo de las series)
+ * 1. DELETE blacklisted items (el hilo de las series, mejores pelis...)
  * 2. MERGE duplicate groups (migrate scores/favorites/recs, then delete losers)
  *
  * FK relations use ON DELETE CASCADE, but we migrate first to preserve data.
@@ -35,6 +35,7 @@ Deno.serve(async (req) => {
         // ==========================================
         const BLACKLIST_IDS = [
             '00d3b777-7347-48b9-a99d-a994865ca38c', // "El hilo de las SERIES - 2024"
+            '1d6daaf3-1090-4591-b925-6fa066b22ac1', // "Mejores películas de Ciencia Ficción"
         ];
 
         log('\n=== 🚫 REMOVING BLACKLISTED ITEMS ===');
@@ -54,6 +55,20 @@ Deno.serve(async (req) => {
         // STEP 2: MERGE DUPLICATE GROUPS
         // ==========================================
         const MERGE_GROUPS: MergeGroup[] = [
+            {
+                label: 'Oppenheimer',
+                keepId: '8eb25e6a-e2c1-4e8b-adf6-7f4307628237',    // Keeper (Poster ✅)
+                deleteIds: [
+                    'e3e05344-ac8f-4433-ad08-f865728190cf',        // "Oppenheimer - Opiniones"
+                ],
+            },
+            {
+                label: 'True Detective',
+                keepId: 'a0b6aa57-7adc-40cb-93bb-e9e26ed79744',    // Keeper
+                deleteIds: [
+                    'ef0831c8-3a95-484d-96d4-174c3e31e0f2',        // "True Detective: Night Country"
+                ],
+            },
             {
                 label: 'El Padrino',
                 keepId: 'b6653890-a320-4398-a90e-14efc7017f85',    // 1972, poster✅, 463ch synopsis, filmaffinity 9
