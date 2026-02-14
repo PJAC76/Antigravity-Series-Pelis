@@ -3,6 +3,7 @@ import { Layout } from '../components/Layout';
 import { mediaService } from '../services/mediaService';
 import { Sparkles, Loader2, Wand2, Film, Tv } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { cleanMediaList } from '../utils/deduplication';
 
 export const RecommendationsPage = ({ userId }: { userId: string }) => {
     const navigate = useNavigate();
@@ -69,9 +70,19 @@ export const RecommendationsPage = ({ userId }: { userId: string }) => {
         }
     };
 
-    // Separate movies and series
-    const movieRecs = recommendations.filter(r => r.media_items?.type === 'movie');
-    const seriesRecs = recommendations.filter(r => r.media_items?.type === 'series');
+    // Separate movies and series, then deduplicate and filter blacklisted
+    const allMovieRecs = recommendations.filter(r => r.media_items?.type === 'movie');
+    const allSeriesRecs = recommendations.filter(r => r.media_items?.type === 'series');
+    const movieRecs = cleanMediaList(
+        allMovieRecs,
+        (r: any) => r.media_items?.title ?? '',
+        (r: any) => r.reason_text?.length ?? 0
+    );
+    const seriesRecs = cleanMediaList(
+        allSeriesRecs,
+        (r: any) => r.media_items?.title ?? '',
+        (r: any) => r.reason_text?.length ?? 0
+    );
 
     const renderRecCard = (rec: any, i: number) => (
         <div
