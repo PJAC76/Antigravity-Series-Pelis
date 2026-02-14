@@ -2,8 +2,7 @@ import { getSupabaseClient } from '../_shared/db.ts';
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-api-version',
-  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, PUT, DELETE'
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
 Deno.serve(async (req) => {
@@ -77,7 +76,47 @@ Deno.serve(async (req) => {
             fetchPool('series')
         ]);
 
-        console.log(`[RECS] Found ${movies.length} movies and ${series.length} series candidates post-2001.`);
+        // --- Inline deduplication & blacklist (can't import from frontend) ---
+        const normalizeTitle = (title: string): string =>
+            title.toLowerCase().trim()
+                .replace(/\s*[-\u2013:]\s*temporada\s*\d+/gi, '')
+                .replace(/\s*temporada\s*\d+/gi, '')
+                .replace(/\s*[-\u2013:]\s*season\s*\d+/gi, '')
+                .replace(/\s*season\s*\d+/gi, '')
+                .replace(/\s*[-\u2013:]\s*[ts]\d+/gi, '')
+                .replace(/\s*[-\u2013:]\s*$/, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+        const TITLE_BLACKLIST = [
+            'el hilo de las series', 'hilo de las series', 'hilo series',
+            'test connectivity', 'test connection movie'
+        ];
+
+        const isBlacklisted = (title: string): boolean => {
+            const norm = normalizeTitle(title);
+            return TITLE_BLACKLIST.some(bl => norm.includes(bl));
+        };
+
+        const deduplicateItems = (items: any[]): any[] => {
+            const seen = new Map<string, any>();
+            for (const item of items) {
+                if (isBlacklisted(item.title || '')) continue;
+                const key = normalizeTitle(item.title || '');
+                const existing = seen.get(key);
+                const itemScoreCount = (item.sources_scores || []).length;
+                const existingScoreCount = existing ? (existing.sources_scores || []).length : 0;
+                if (!existing || itemScoreCount > existingScoreCount) {
+                    seen.set(key, item);
+                }
+            }
+            return Array.from(seen.values());
+        };
+
+        const dedupedMovies = deduplicateItems(movies);
+        const dedupedSeries = deduplicateItems(series);
+
+        console.log(`[RECS] After dedup: ${dedupedMovies.length} movies, ${dedupedSeries.length} series.`);
 
         // 5. Scoring Logic Helper
         const scoreItem = (item: any) => {
@@ -108,8 +147,8 @@ Deno.serve(async (req) => {
         };
 
         // 6. Build Balanced Top 20 (10 movies + 10 series)
-        const scoredMovies = movies.map(scoreItem).sort((a, b) => b.similarity_score - a.similarity_score);
-        const scoredSeries = series.map(scoreItem).sort((a, b) => b.similarity_score - a.similarity_score);
+        const scoredMovies = dedupedMovies.map(scoreItem).sort((a, b) => b.similarity_score - a.similarity_score);
+        const scoredSeries = dedupedSeries.map(scoreItem).sort((a, b) => b.similarity_score - a.similarity_score);
 
         const topMovies = scoredMovies.slice(0, 10);
         const topSeries = scoredSeries.slice(0, 10);
