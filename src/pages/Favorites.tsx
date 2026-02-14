@@ -5,6 +5,7 @@ import { mediaService } from '../services/mediaService';
 import { supabase } from '../lib/supabase';
 import { Heart, Loader2, Film, Tv, Plus, Search, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { cleanMediaList } from '../utils/deduplication';
 
 export const FavoritesPage = () => {
     const navigate = useNavigate();
@@ -45,9 +46,19 @@ export const FavoritesPage = () => {
         fetchFavorites();
     }, [user]);
 
-    // Separate movies and series
-    const favoriteMovies = favorites.filter(f => f.type === 'movie');
-    const favoriteSeries = favorites.filter(f => f.type === 'series');
+    // Separate movies and series, then deduplicate and filter blacklisted
+    const allFavoriteMovies = favorites.filter(f => f.type === 'movie');
+    const allFavoriteSeries = favorites.filter(f => f.type === 'series');
+    const favoriteMovies = cleanMediaList(
+        allFavoriteMovies,
+        (f: any) => f.title ?? '',
+        (f: any) => f.aggregated_scores?.final_score ?? 0
+    );
+    const favoriteSeries = cleanMediaList(
+        allFavoriteSeries,
+        (f: any) => f.title ?? '',
+        (f: any) => f.aggregated_scores?.final_score ?? 0
+    );
 
     const handleToggleFavorite = async (id: string) => {
         if (!user) return;
@@ -201,7 +212,7 @@ export const FavoritesPage = () => {
                     <div className="glass-card p-8 space-y-6 animate-in fade-in slide-in-from-top-4 duration-300">
                         <div className="flex items-center justify-between">
                             <h3 className="text-xl font-black">Buscar y Añadir</h3>
-                            <button onClick={() => setShowAddForm(false)} className="p-2 hover:bg-white/5 rounded-lg transition-colors" title="Cerrar">
+                            <button onClick={() => setShowAddForm(false)} className="p-2 hover:bg-white/5 rounded-lg transition-colors">
                                 <X size={20} />
                             </button>
                         </div>
@@ -252,7 +263,7 @@ export const FavoritesPage = () => {
                                     type="number"
                                     value={yearInput}
                                     onChange={(e) => setYearInput(e.target.value)}
-                                    placeholder="Año (opcional)"
+                                    placeholder="Año (opcional, se detectará automáticamente)"
                                     className="w-full px-5 py-3 bg-secondary/50 border border-white/10 rounded-xl text-white placeholder:text-foreground/30 focus:outline-none focus:border-primary/50 text-sm"
                                     disabled={isAdding}
                                     min="1900"
